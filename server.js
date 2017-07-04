@@ -18,8 +18,8 @@ function broadcast(clients, message) {
 	setTimeout(function () {
 		clients.forEach(cl => {
 			try {
-			cl.send(msg);
-			} catch(err) {
+				cl.send(msg);
+			} catch (err) {
 				clients.splice(clients.indexOf(cl), 1);
 			}
 		})
@@ -109,4 +109,9 @@ wss.on("connection", function (ws) {
 			}
 		}, latency)
 	});
+
+	ws.on("close", function () {
+		inQueue.delete(ws);
+		console.log(inQueue)
+	})
 });
