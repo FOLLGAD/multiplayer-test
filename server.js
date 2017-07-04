@@ -7,7 +7,6 @@ const player = require("./player");
 const Game = require("./game");
 
 const config = require("./config.json");
-console.log(config)
 
 let gamesession;
 

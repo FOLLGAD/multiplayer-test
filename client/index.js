@@ -87,6 +87,7 @@ document.addEventListener("keyup", function (e) {
 function draw() {
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
 	gamestate.players.forEach(player => {
+		ctx.fillStyle = player.color;
 		ctx.fillRect(player.pos.x, player.pos.y, 20, 20);
 	});
 	requestAnimationFrame(draw);

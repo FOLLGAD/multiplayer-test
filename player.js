@@ -7,6 +7,8 @@ class player {
 		this.vel = new vector(0, 0);
 		this.id = id;
 
+		let rn = Math.random;
+		this.color = `rgb(${rn() * 255 | 0}, ${rn() * 255 | 0}, ${rn() * 255 | 0})`;
 		this.speed = 2;
 	}
 }
