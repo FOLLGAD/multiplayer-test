@@ -1,15 +1,39 @@
-let vector = require("./vector");
+let vector = require("./vector"),
+	shortid = require("shortid")
+let random = Math.random;
 
 class player {
-	constructor({ pos = new vector(0, 0), id }) {
-		console.assert(id);
-		this.pos = pos;
+	constructor({ client }) {
+		console.assert(client);
+		this.id = shortid.generate()
+		this.pos = new vector(null, null);
 		this.vel = new vector(0, 0);
-		this.id = id;
+		this.client = client;
 
-		let rn = Math.random;
-		this.color = `rgb(${rn() * 255 | 0}, ${rn() * 255 | 0}, ${rn() * 255 | 0})`;
-		this.speed = 2;
+		this.color = `rgb(${random() * 255 | 0}, ${random() * 255 | 0}, ${random() * 255 | 0})`;
+		this.speed = 0.5;
+		this.cooldown = 0;
+		this.size = 40;
+		this.dead = true;
+	}
+	spawn() {
+		this.pos.set(0, 0)
+		this.dead = false
+	}
+	die() {
+		this.dead = true
+		this.pos.x = null
+		this.pos.y = null
+	}
+	toObject() {
+		return {
+			pos: this.pos.toObject(),
+			vel: this.vel.toObject(),
+			color: this.color,
+			speed: this.speed,
+			size: this.size,
+			dead: this.dead,
+		}
 	}
 }
 
