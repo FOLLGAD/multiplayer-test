@@ -1,4 +1,4 @@
 {
-	"dev": false,
-	"latency": 100
+	"dev": true,
+	"latency": 50
 }

@@ -66,25 +66,25 @@ class Game {
 
 		return myplayer
 	}
-	filterPlayer(player) {
+	filterPlayer(players, player) {
 		// Shallow copy
-		let players = Array.from(this.players);
+		let playersCopy = Array.from(players);
 
 		// Dont send the current client
-		for (let i = 0; i < players.length; i++) {
+		for (let i = 0; i < playersCopy.length; i++) {
 
 			// Check if players share the same client
-			if (players[i].client == player.client) {
+			if (playersCopy[i].id == player.id) {
 
-				// Save current client's player
-				players.splice(i, 1);
+				// Splice current client's player
+				playersCopy.splice(i, 1);
 				break;
 			}
 		}
-		return players
+		return playersCopy
 	}
 	updateGameState() {
-		setTimeout(this.updateGameState.bind(this), 30);
+		setTimeout(this.updateGameState.bind(this), 10)
 
 		if (!this.lastUpdate) {
 			this.lastUpdate = Date.now()
@@ -94,23 +94,28 @@ class Game {
 
 			this.lastUpdate = newTime
 
+			this.sendData()
+
 			// Update physics
 			this.update(delta)
 		}
-
+	}
+	sendData() {
 		// Send updated players-positions to every player
+		let originalPlayers = Array.from(this.players)
+			// Filter out all dead
+			.filter(pl => !pl.dead)
+			// Make JSON-friendly
+			.map(pl => pl.toObject())
+
 		this.players
 			.forEach(player => {
 				let players = this
 					// Filter out self
-					.filterPlayer(player)
-					// Filter out all dead
-					.filter(pl => !pl.dead)
-					// Make JSON-friendly
-					.map(pl => pl.toObject())
+					.filterPlayer(originalPlayers, player)
 
 				// Send
-				player.client.send(JSON.stringify({ type: "gamestate", players: players, bullets: this.bullets }));
+				player.client.send(JSON.stringify({ type: "gamestate", date: this.lastUpdate, players: players, player: player.toObject(), bullets: this.bullets }));
 			})
 	}
 	start() {
@@ -123,11 +128,13 @@ class Game {
 			bullet.pos.x += Math.cos(bullet.dir) * bullet.speed * delta
 			bullet.pos.y += Math.sin(bullet.dir) * bullet.speed * delta
 		})
+		let players = this.players.filter(pl => !pl.dead)
+
 		for (let i = 0; i < this.bullets.length; i++) {
 			let bullet = this.bullets[i]
 
-			for (let p = 0; p < this.players.length; p++) {
-				let player = this.players[p]
+			for (let p = 0; p < players.length; p++) {
+				let player = players[p]
 
 				if (player.id == bullet.owner) continue;
 
@@ -136,8 +143,7 @@ class Game {
 
 				if (colx && coly) {
 					this.bullets.splice(this.bullets.indexOf(bullet), 1)
-					player.die()
-					player.client.send(JSON.stringify({ type: "die" }))
+					player.harm(bullet.damage)
 				}
 			}
 		}
@@ -227,7 +233,12 @@ wss.on("connection", function (client) {
 					delta = 200
 					force = true
 				}
+
 				movePlayer(myplayer, data.keys, delta)
+
+				let rotation = Math.atan2(data.target.y - myplayer.pos.y - myplayer.size / 2, data.target.x - myplayer.pos.x - myplayer.size / 2)
+				myplayer.rotation = rotation
+
 				if (force) {
 					client.send(JSON.stringify({ type: "playerpos", pos: myplayer.pos.toObject(), time: Date.now() }))
 				}
@@ -271,17 +282,25 @@ function movePlayer(player, keys, delta) {
 
 		if (keys.right !== keys.left) {
 			if (keys.right) {
+				player.vel.x = 1 * scalar
 				player.pos.x += player.speed * scalar
 			} else {
+				player.vel.x = -1 * scalar
 				player.pos.x -= player.speed * scalar
 			}
+		} else {
+			player.vel.x = 0
 		}
 		if (keys.down !== keys.up) {
 			if (keys.down) {
+				player.vel.y = 1 * scalar
 				player.pos.y += player.speed * scalar
 			} else {
+				player.vel.y = -1 * scalar
 				player.pos.y -= player.speed * scalar
 			}
+		} else {
+			player.vel.y = 0
 		}
 	}
 }

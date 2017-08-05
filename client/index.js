@@ -1,19 +1,16 @@
 let socket = new WebSocket("ws://192.168.1.20:8080"),
 	player,
-	dead = false,
+	dead = true,
 	gamestate = {
 		players: [],
 		bullets: [],
+		lastPacket: null,
 	},
 	canvas = document.createElement("canvas"),
 	ctx = canvas.getContext("2d"),
 	currentTime = null;
 
-let overlay, menu, spawn;
-
-let LAGSWITCH = false
-
-let showMenu
+let overlay, menu, spawn, showMenu
 
 document.addEventListener("DOMContentLoaded", function () {
 	document.body.appendChild(canvas)
@@ -42,6 +39,7 @@ canvas.height = window.innerHeight
 function addVectors(base, add) {
 	let x = base.x + add.x
 	let y = base.y + add.y
+
 	return { x, y }
 }
 
@@ -52,22 +50,13 @@ function multiplyVector(vector, scalar) {
 	}
 }
 
-function updatePos() {
-	if (player) {
-		if (!currentTime) {
-			currentTime = Date.now()
-			return
-		}
-		let lastTime = currentTime
-		currentTime = Date.now()
-
-		let delta = currentTime - lastTime
-
+function updatePos(delta) {
+	if (player && !dead) {
 		movePlayer(player, keys, delta)
 
-		let dir = Math.atan2(mouse.y - player.pos.y, mouse.x - player.pos.x)
+		player.rotation = Math.atan2(mouse.y - player.pos.y - player.size / 2, mouse.x - player.pos.x - player.size / 2)
 
-		socket.send(JSON.stringify({ type: "playerupdate", keys: keys, dir: Math.atan2(mouse.y - player.pos.y, mouse.x - player.pos.x), time: currentTime }))
+		socket.send(JSON.stringify({ type: "playerupdate", keys: keys, target: { x: mouse.x, y: mouse.y }, time: currentTime }))
 	}
 }
 
@@ -89,6 +78,16 @@ function movePlayer(player, keys, delta) {
 	}
 }
 
+function shootBullet() {
+	let time = Date.now()
+	socket.send(JSON.stringify({
+		type: "shoot",
+		pos: player.pos,
+		target: mouse,
+		time: time,
+	}))
+}
+
 socket.onopen = function () {
 	console.log("Connection established");
 }
@@ -100,16 +99,18 @@ socket.onmessage = function (message) {
 		case "gameinfo":
 			gamestate.players = data.players
 			player = data.player
-			loop()
 			break
 		case "gamestate":
 			gamestate.players = data.players
 			gamestate.bullets = data.bullets
+			player.health = data.player.health
+			gamestate.lastPacket = Date.now()
 			break
 		case "playerpos":
 			player.pos.x = data.pos.x
 			player.pos.y = data.pos.y
 			currentTime = data.time
+			dead = false
 			break
 		case "die":
 			player.pos.x = undefined
@@ -138,6 +139,9 @@ let keyBinds = {
 	"KeyA": "left",
 }
 
+// For lag testing
+
+let LAGSWITCH = false
 
 document.addEventListener("keydown", function (e) {
 	if (e.code == "Backquote") {
@@ -155,38 +159,56 @@ document.addEventListener("mousemove", function (e) {
 	mouse.x = e.clientX
 	mouse.y = e.clientY
 })
-document.addEventListener("DOMContentLoaded", function () {
-	document.body.addEventListener("mouseleave", function (e) {
-		mouse.x = undefined
-		mouse.y = undefined
-	})
-})
 document.addEventListener("contextmenu", function (e) {
 	e.preventDefault()
 })
-document.addEventListener("mousedown", function (e) {
-	let time = Date.now()
-	socket.send(JSON.stringify({
-		type: "shoot",
-		target: mouse,
-		pos: player.pos,
-		time: time,
-	}))
-})
+document.addEventListener("mousedown", shootBullet)
 // document.addEventListener("mouseup", function (e) {
 // 	keys.shooting = false
 // })
 
+let clientsmoothing = true
+
 function draw() {
 	ctx.clearRect(0, 0, canvas.width, canvas.height)
 
+	// For visual interpolation
+	let packetDelta = currentTime - gamestate.lastPacket
+
+	if (packetDelta > 200) {
+		packetDelta = 200
+	}
+
 	gamestate.players.forEach(player => {
+		let newpos
+
+		if (clientsmoothing && packetDelta) {
+			newpos = addVectors(player.pos, multiplyVector(player.vel, packetDelta * player.speed))
+		} else {
+			newpos = player.pos
+		}
+
+		ctx.translate(newpos.x + player.size / 2, newpos.y + player.size / 2)
+		ctx.rotate(player.rotation)
 		ctx.fillStyle = player.color
-		ctx.fillRect(player.pos.x, player.pos.y, player.size, player.size)
+		ctx.fillRect(-player.size / 2, -player.size / 2, player.size, player.size)
+		ctx.rotate(-player.rotation)
+		ctx.translate(-newpos.x - player.size / 2, -newpos.y - player.size / 2)
 	})
 
-	ctx.fillStyle = player.color
-	ctx.fillRect(player.pos.x, player.pos.y, player.size, player.size)
+	if (!dead) {
+		ctx.translate(player.pos.x + player.size / 2, player.pos.y + player.size / 2)
+		ctx.rotate(player.rotation)
+		ctx.fillStyle = player.color
+		ctx.fillRect(-player.size / 2, -player.size / 2, player.size, player.size)
+		ctx.rotate(-player.rotation)
+		ctx.translate(-player.pos.x - player.size / 2, -player.pos.y - player.size / 2)
+
+		// Health bar
+		let percentage = player.health / 100
+		ctx.fillStyle = "rgb(80, 240, 20)"
+		ctx.fillRect(player.pos.x + player.size / 2 - ((player.size / 2) * percentage), player.pos.y - 10, player.size * percentage, 10)
+	}
 
 	// Draw cursor
 	// if (mouse.x != void 0 && mouse.y != void 0) {
@@ -203,12 +225,26 @@ function draw() {
 }
 
 function loop() {
+	// For lag-testing
 	if (LAGSWITCH) {
-		LAGSWITCH = false
 		setTimeout(loop, 500)
+		LAGSWITCH = false
 		return
 	}
+
 	requestAnimationFrame(loop)
-	updatePos()
+
+	if (!currentTime) {
+		currentTime = Date.now()
+		return
+	}
+	let lastTime = currentTime
+	currentTime = Date.now()
+
+	let delta = currentTime - lastTime
+
+	updatePos(delta)
 	draw()
 }
+
+loop()
