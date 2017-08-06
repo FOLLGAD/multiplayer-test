@@ -5,6 +5,7 @@ let socket = new WebSocket("ws://192.168.1.20:8080"),
 		players: [],
 		bullets: [],
 		lastPacket: null,
+		mybullets: [],
 	},
 	canvas = document.createElement("canvas"),
 	ctx = canvas.getContext("2d"),
@@ -79,6 +80,11 @@ function movePlayer(player, keys, delta) {
 }
 
 function shootBullet() {
+
+	if (dead || player.pos.x == null || player.pos.y == null || mouse.x == null || mouse.y == null) {
+		return
+	}
+
 	let time = Date.now()
 	socket.send(JSON.stringify({
 		type: "shoot",
@@ -86,6 +92,26 @@ function shootBullet() {
 		target: mouse,
 		time: time,
 	}))
+
+	let bulletsize = 8
+	let newpos = {
+		x: player.pos.x - bulletsize / 2 + player.size / 2,
+		y: player.pos.y - bulletsize / 2 + player.size / 2,
+	}
+	let newtarget = {
+		x: mouse.x - bulletsize / 2,
+		y: mouse.y - bulletsize / 2,
+	}
+	let bullet = {
+		pos: newpos,
+		dir: Math.atan2(newtarget.y - newpos.y, newtarget.x - newpos.x),
+		// damage: weapons[player.weapon].damage,
+		damage: 50,
+		speed: 0.8,
+		size: bulletsize,
+		owner: player.id,
+	}
+	gamestate.mybullets.push(bullet)
 }
 
 socket.onopen = function () {
@@ -104,7 +130,7 @@ socket.onmessage = function (message) {
 			gamestate.players = data.players
 			gamestate.bullets = data.bullets
 			player.health = data.player.health
-			gamestate.lastPacket = Date.now()
+			gamestate.lastPacket = data.time
 			break
 		case "playerpos":
 			player.pos.x = data.pos.x
@@ -169,7 +195,7 @@ document.addEventListener("mousedown", shootBullet)
 
 let clientsmoothing = true
 
-function draw() {
+function draw(delta) {
 	ctx.clearRect(0, 0, canvas.width, canvas.height)
 
 	// For visual interpolation
@@ -218,10 +244,35 @@ function draw() {
 	// }
 
 	for (let i = 0; i < gamestate.bullets.length; i++) {
-		let bullet = gamestate.bullets[i];
-		ctx.fillStyle = "rgb(12, 12, 0)"
-		ctx.fillRect(bullet.pos.x, bullet.pos.y, bullet.size, bullet.size)
+		let bullet = gamestate.bullets[i]
+
+		if (player.id == bullet.owner) continue
+
+		let visbullet = moveProjectile(bullet, packetDelta)
+
+		drawBullet(visbullet, bullet)
 	}
+	for (let i = 0; i < gamestate.mybullets.length; i++) {
+		let bullet = gamestate.mybullets[i]
+
+		let newpos = moveProjectile(bullet, delta)
+
+		bullet.pos.x = newpos.x
+		bullet.pos.y = newpos.y
+
+		drawBullet(newpos, bullet)
+	}
+}
+
+function drawBullet(visbullet, bullet) {
+	ctx.fillStyle = "rgb(12, 12, 0)"
+	ctx.fillRect(visbullet.x, visbullet.y, bullet.size, bullet.size)
+}
+
+function moveProjectile(projectile, delta) {
+	let x = projectile.pos.x + Math.cos(projectile.dir) * projectile.speed * delta
+	let y = projectile.pos.y + Math.sin(projectile.dir) * projectile.speed * delta
+	return { x: x, y: y }
 }
 
 function loop() {
@@ -244,7 +295,7 @@ function loop() {
 	let delta = currentTime - lastTime
 
 	updatePos(delta)
-	draw()
+	draw(delta)
 }
 
 loop()

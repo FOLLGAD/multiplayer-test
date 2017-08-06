@@ -114,8 +114,12 @@ class Game {
 					// Filter out self
 					.filterPlayer(originalPlayers, player)
 
-				// Send
-				player.client.send(JSON.stringify({ type: "gamestate", date: this.lastUpdate, players: players, player: player.toObject(), bullets: this.bullets }));
+				try {
+					// Send
+					player.client.send(JSON.stringify({ type: "gamestate", time: this.lastUpdate, players: players, player: player.toObject(), bullets: this.bullets }));
+				} catch (err) {
+					console.error(err)
+				}
 			})
 	}
 	start() {
@@ -125,8 +129,7 @@ class Game {
 	}
 	update(delta) {
 		this.bullets.forEach(bullet => {
-			bullet.pos.x += Math.cos(bullet.dir) * bullet.speed * delta
-			bullet.pos.y += Math.sin(bullet.dir) * bullet.speed * delta
+			moveProjectile(bullet, delta)
 		})
 		let players = this.players.filter(pl => !pl.dead)
 
@@ -148,7 +151,7 @@ class Game {
 			}
 		}
 	}
-	shootBullet(position, target, player) {
+	shootBullet(position, target, player, aheadStart = 0) {
 		let bulletsize = 8
 		let newpos = {
 			x: position.x - bulletsize / 2,
@@ -167,8 +170,16 @@ class Game {
 			size: bulletsize,
 			owner: player.id,
 		}
+
+		moveProjectile(bullet, aheadStart)
+
 		this.bullets.push(bullet)
 	}
+}
+
+function moveProjectile(projectile, delta) {
+	projectile.pos.x += Math.cos(projectile.dir) * projectile.speed * delta
+	projectile.pos.y += Math.sin(projectile.dir) * projectile.speed * delta
 }
 
 function createGame() {
@@ -246,20 +257,31 @@ wss.on("connection", function (client) {
 				if (myplayer.dead) {
 					return
 				}
-				let delta = Math.max(data.time - currentTime, 200),
+
+				let delta = Math.min(data.time - currentTime, 200),
 					pos = data.pos;
+
 				if (delta < 0) {
 					delta = 0
 				}
+
 				if (!data.target || data.target.x == null || data.target.y == null || !pos || pos.x == null || pos.y == null || !data.time) {
 					return
 				}
+
 				if (myplayer.pos.hypot(pos) > myplayer.speed * delta) {
 					pos = myplayer.pos
 				}
-				pos.x += myplayer.size / 2
-				pos.y += myplayer.size / 2
-				mygame.shootBullet(pos, data.target, myplayer)
+
+				mygame.shootBullet(
+					{
+						x: pos.x + myplayer.size / 2,
+						y: pos.y + myplayer.size / 2
+					},
+					data.target,
+					myplayer,
+					delta
+				)
 			} else if (type == "spawn") {
 				myplayer.spawn()
 				client.send(JSON.stringify({ type: "playerpos", pos: myplayer.pos.toObject(), time: Date.now() }))
