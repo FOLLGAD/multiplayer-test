@@ -1,41 +1,62 @@
-let socket = new WebSocket("ws://192.168.1.20:8080"),
+let socket,
 	player,
 	dead = true,
 	gamestate = {
 		players: [],
 		bullets: [],
-		lastPacket: null,
 		mybullets: [],
+		map: null,
 	},
-	canvas = document.createElement("canvas"),
-	ctx = canvas.getContext("2d"),
+	playerInputs = [],
+	inputNumber = 0,
 	currentTime = null;
 
-let overlay, menu, spawn, showMenu
+let canvas = document.createElement("canvas"),
+	ctx = canvas.getContext("2d");
+
+function showScreen(screen) {
+	if (screen == "game_menu") {
+		main_menu.style.display = "none"
+		game_menu.style.display = "block"
+	} else if (screen == "main_menu") {
+		main_menu.style.display = "block"
+		game_menu.style.display = "none"
+	} else if (screen == "game_canvas") {
+		main_menu.style.display = "none"
+		game_menu.style.display = "none"
+	}
+}
+
+function emit(type, data) {
+	let info = { type: type }
+	if (data) info.data = data
+	socket.send(JSON.stringify(info))
+}
+
+function resize() {
+	canvas.width = window.innerWidth
+	canvas.height = window.innerHeight
+}
 
 document.addEventListener("DOMContentLoaded", function () {
 	document.body.appendChild(canvas)
 
-	overlay = document.body.appendChild(document.createElement("div"));
-	menu = overlay.appendChild(document.createElement("div"));
-	spawn = menu.appendChild(document.createElement("button"));
-	spawn.textContent = "Spawn"
+	window.addEventListener("resize", resize)
+	resize()
 
-	overlay.style.position = "fixed"
-	overlay.style.top = 0
+	let game_menu = document.getElementById("game_menu"),
+		main_menu = document.getElementById("main_menu"),
+		connect_btn = document.getElementById("connect_btn"),
+		spawn_btn = document.getElementById("spawn_btn");
 
-	showMenu = function () {
-		menu.style.display = "block"
-	}
+	connect_btn.addEventListener("click", connect)
 
-	spawn.addEventListener("click", function () {
-		socket.send(JSON.stringify({ type: "spawn" }))
-		menu.style.display = "none"
-	})
+	spawn_btn.addEventListener("click", spawn)
 });
 
-canvas.width = window.innerWidth
-canvas.height = window.innerHeight
+function spawn() {
+	emit("spawn")
+}
 
 function addVectors(base, add) {
 	let x = base.x + add.x
@@ -53,45 +74,83 @@ function multiplyVector(vector, scalar) {
 
 function updatePos(delta) {
 	if (player && !dead) {
-		movePlayer(player, keys, delta)
+		let input = {
+			delta: delta,
+			vdt: 0,
+			hdt: 0,
+			rotation: player.rotation,
+			isn: inputNumber++,
+		}
+
+		if (keys.right !== keys.left) {
+			input.hdt = keys.right ? 1 : -1
+		}
+		if (keys.down !== keys.up) {
+			input.vdt = keys.down ? 1 : -1
+		}
+
+		playerInputs.push(input)
+
+		movePlayer(player, input)
 
 		player.rotation = Math.atan2(mouse.y - player.pos.y - player.size / 2, mouse.x - player.pos.x - player.size / 2)
 
-		socket.send(JSON.stringify({ type: "playerupdate", keys: keys, target: { x: mouse.x, y: mouse.y }, time: currentTime }))
+		sendInput(input)
 	}
 }
 
-function movePlayer(player, keys, delta) {
-	let scalar = (keys.right || keys.left) && (keys.up || keys.down) ? 0.7 : 1
-	if (keys.right !== keys.left) {
-		if (keys.right) {
-			player.pos.x += player.speed * delta * scalar
-		} else {
-			player.pos.x -= player.speed * delta * scalar
-		}
-	}
-	if (keys.down !== keys.up) {
-		if (keys.down) {
-			player.pos.y += player.speed * delta * scalar
-		} else {
-			player.pos.y -= player.speed * delta * scalar
+function sendInput(input) {
+	emit("playerupdate", { input: input, rotation: player.rotation, time: Date.now() })
+}
+
+function movePlayer(player, input) {
+	if (input.vdt > 1 || input.vdt < -1 || input.hdt > 1 || input.hdt < -1) return
+
+	let scalar = input.hdt !== 0 && input.vdt !== 0 ? 0.7 : 1
+
+	player.lastPos.x = player.pos.x
+	player.pos.x += player.speed * input.delta * scalar * input.hdt
+
+	checkCollision(player, "x")
+
+	player.lastPos.y = player.pos.y
+	player.pos.y += player.speed * input.delta * scalar * input.vdt
+
+	checkCollision(player, "y")
+
+	player.isn = input.isn
+}
+
+function checkCollision(player, way) {
+	if (player.pos.x > gamestate.map.width) player.pos.x = gamestate.map.width
+	else if (player.pos.x < 0) player.pos.x = 0
+	if (player.pos.y > gamestate.map.height) player.pos.y = gamestate.map.height
+	else if (player.pos.y < 0) player.pos.y = 0
+
+	for (let i = 0; i < gamestate.map.tiles.length; i++) {
+		let tile = gamestate.map.tiles[i];
+		if (tile.x < player.pos.x + player.size && tile.x + tile.scale > player.pos.x &&
+			tile.y < player.pos.y + player.size && tile.y + tile.scale > player.pos.y) {
+			if (player.lastPos[way] + player.size <= tile[way]) {
+				player.pos[way] = tile[way] - player.size
+			} else {
+				player.pos[way] = tile[way] + tile.scale
+			}
 		}
 	}
 }
 
 function shootBullet() {
-
 	if (dead || player.pos.x == null || player.pos.y == null || mouse.x == null || mouse.y == null) {
 		return
 	}
 
 	let time = Date.now()
-	socket.send(JSON.stringify({
-		type: "shoot",
+	emit("shoot", {
 		pos: player.pos,
 		target: mouse,
 		time: time,
-	}))
+	})
 
 	let bulletsize = 8
 	let newpos = {
@@ -114,39 +173,82 @@ function shootBullet() {
 	gamestate.mybullets.push(bullet)
 }
 
-socket.onopen = function () {
-	console.log("Connection established");
+function onopen() {
+	showScreen("game_menu")
+	initialize()
 }
 
-socket.onmessage = function (message) {
-	let data = JSON.parse(message.data)
-	switch (data.type) {
-		case "initgame":
-		case "gameinfo":
+function onmessage(message) {
+	let parsed = JSON.parse(message.data),
+		type = parsed.type,
+		data = parsed.data;
+
+	switch (type) {
+		case "game-setup":
+			gamestate.map = data.map
 			gamestate.players = data.players
 			player = data.player
+			loop()
 			break
 		case "gamestate":
 			gamestate.players = data.players
 			gamestate.bullets = data.bullets
+
+			player.pos.x = data.player.pos.x
+			player.pos.y = data.player.pos.y
 			player.health = data.player.health
-			gamestate.lastPacket = data.time
+			player.isn = data.player.isn
+
+			move()
 			break
 		case "playerpos":
 			player.pos.x = data.pos.x
 			player.pos.y = data.pos.y
 			currentTime = data.time
 			dead = false
+			showScreen("game_canvas")
 			break
 		case "die":
 			player.pos.x = undefined
 			player.pos.y = undefined
 			dead = true
-			showMenu()
+			showScreen("game_menu")
 			break
-		case "log":
-			console.log(data.msg)
-			break
+	}
+}
+
+function onclose() {
+	setTimeout(connect, 1000)
+}
+
+function initialize() {
+	dead = true
+	gamestate = {
+		players: [],
+		bullets: [],
+		mybullets: [],
+	}
+	playerInputs = []
+	inputNumber = 0
+	currentTime = null
+}
+
+function connect() {
+	socket = new WebSocket("ws://192.168.1.20:80")
+	socket.onopen = onopen
+	socket.onmessage = onmessage
+	socket.onclose = onclose
+}
+
+function move() {
+	for (let i = 0; i < playerInputs.length; i++) {
+		let inp = playerInputs[i]
+		if (inp.isn <= player.isn) {
+			playerInputs.splice(i, 1)
+			i--
+		} else {
+			movePlayer(player, playerInputs[i])
+		}
 	}
 }
 
@@ -173,10 +275,12 @@ document.addEventListener("keydown", function (e) {
 	if (e.code == "Backquote") {
 		LAGSWITCH = true
 	}
-	keys[keyBinds[e.code]] = true
+	let bind = keyBinds[e.code]
+	bind && (keys[bind] = true)
 })
 document.addEventListener("keyup", function (e) {
-	keys[keyBinds[e.code]] = false
+	let bind = keyBinds[e.code]
+	bind && (keys[bind] = false)
 })
 
 let mouse = { x: undefined, y: undefined }
@@ -185,9 +289,7 @@ document.addEventListener("mousemove", function (e) {
 	mouse.x = e.clientX
 	mouse.y = e.clientY
 })
-document.addEventListener("contextmenu", function (e) {
-	e.preventDefault()
-})
+document.addEventListener("contextmenu", e => e.preventDefault())
 document.addEventListener("mousedown", shootBullet)
 // document.addEventListener("mouseup", function (e) {
 // 	keys.shooting = false
@@ -198,28 +300,28 @@ let clientsmoothing = true
 function draw(delta) {
 	ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-	// For visual interpolation
-	let packetDelta = currentTime - gamestate.lastPacket
+	let packetDelta = 0
 
-	if (packetDelta > 200) {
-		packetDelta = 200
-	}
-
-	gamestate.players.forEach(player => {
+	gamestate.players.forEach(drawPlayer => {
 		let newpos
 
-		if (clientsmoothing && packetDelta) {
-			newpos = addVectors(player.pos, multiplyVector(player.vel, packetDelta * player.speed))
-		} else {
-			newpos = player.pos
-		}
+		// if (clientsmoothing && packetDelta) {
+		// newpos = addVectors(drawPlayer.pos, multiplyVector(drawPlayer.vel, packetDelta * drawPlayer.speed))
+		// } else {
+		newpos = drawPlayer.pos
+		// }
 
-		ctx.translate(newpos.x + player.size / 2, newpos.y + player.size / 2)
-		ctx.rotate(player.rotation)
-		ctx.fillStyle = player.color
-		ctx.fillRect(-player.size / 2, -player.size / 2, player.size, player.size)
-		ctx.rotate(-player.rotation)
-		ctx.translate(-newpos.x - player.size / 2, -newpos.y - player.size / 2)
+		ctx.translate(newpos.x + drawPlayer.size / 2, newpos.y + drawPlayer.size / 2)
+		ctx.rotate(drawPlayer.rotation)
+		ctx.fillStyle = drawPlayer.color
+		ctx.fillRect(-drawPlayer.size / 2, -drawPlayer.size / 2, drawPlayer.size, drawPlayer.size)
+		ctx.rotate(-drawPlayer.rotation)
+		ctx.translate(-newpos.x - drawPlayer.size / 2, -newpos.y - drawPlayer.size / 2)
+	})
+
+	gamestate.map.tiles.forEach(tile => {
+		ctx.fillStyle = "#333"
+		ctx.fillRect(tile.x, tile.y, tile.scale, tile.scale)
 	})
 
 	if (!dead) {
@@ -297,5 +399,3 @@ function loop() {
 	updatePos(delta)
 	draw(delta)
 }
-
-loop()

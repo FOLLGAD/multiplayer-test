@@ -1,18 +1,32 @@
+let config = require("./config.json");
+
 let WebSocket = require("ws"),
-	wss = new WebSocket.Server({ port: 8080 });
+	wss = new WebSocket.Server({ port: config.port }),
+	fs = require("fs");
 
 let shortid = require("shortid"),
 	vector = require("./vector"),
 	player = require("./player");
 
-const config = require("./config.json");
-
 let gamesessions = new Set();
 
 let latency = 0;
+
 if (config.dev && config.latency) {
 	latency = config.latency;
 }
+
+let maps
+
+fs.readdir("./maps", function (err, mapnames) {
+	maps = mapnames
+		.filter(f => /\.json$/.test(f))
+		.map(f => {
+			let dir = "./maps/" + f
+			return JSON.parse(fs.readFileSync(dir, "utf-8"))
+		})
+	console.log(maps[0].tiles)
+})
 
 function broadcast(clients, message) {
 	let newmsg = Object.assign({}, message);
@@ -29,24 +43,13 @@ function broadcast(clients, message) {
 	}, latency)
 }
 
-let maps = {
-	1: {
-		width: 100,
-		height: 100
-	},
-	2: {
-		width: 200,
-		height: 300
-	}
-}
-
 class Game {
-	constructor(map = maps[1]) {
-		this.map = map;
-		this.id = shortid.generate();
-		this.players = [];
-		this.maxPlayers = 5;
-		this.bullets = [];
+	constructor() {
+		this.map = maps[0]
+		this.id = shortid.generate()
+		this.players = []
+		this.maxPlayers = 5
+		this.bullets = []
 	}
 	init() {
 		this.bullets = []
@@ -62,7 +65,9 @@ class Game {
 		let players = this.filterPlayer(myplayer)
 			.map(player => player.toObject())
 
-		client.send(JSON.stringify({ type: "gameinfo", players: players, player: myplayer.toObject(), map: this.map }));
+		let sendplayer = myplayer.toObject()
+
+		client.godSend("game-setup", { players: players, player: sendplayer, map: this.map });
 
 		return myplayer
 	}
@@ -84,7 +89,7 @@ class Game {
 		return playersCopy
 	}
 	updateGameState() {
-		setTimeout(this.updateGameState.bind(this), 10)
+		setTimeout(this.updateGameState.bind(this), 50)
 
 		if (!this.lastUpdate) {
 			this.lastUpdate = Date.now()
@@ -116,7 +121,7 @@ class Game {
 
 				try {
 					// Send
-					player.client.send(JSON.stringify({ type: "gamestate", time: this.lastUpdate, players: players, player: player.toObject(), bullets: this.bullets }));
+					player.client.godSend("gamestate", { time: this.lastUpdate, players: players, player: player.toBare(), bullets: this.bullets });
 				} catch (err) {
 					console.error(err)
 				}
@@ -175,6 +180,41 @@ class Game {
 
 		this.bullets.push(bullet)
 	}
+	movePlayer(player, input) {
+		if (input.vdt > 1 || input.vdt < -1 || input.hdt > 1 || input.hdt < -1) return
+
+		let scalar = input.hdt !== 0 && input.vdt !== 0 ? 0.7 : 1
+
+		player.lastPos.x = player.pos.x
+		player.pos.x += player.speed * input.delta * scalar * input.hdt
+
+		this.checkCollision(player, "x")
+
+		player.lastPos.y = player.pos.y
+		player.pos.y += player.speed * input.delta * scalar * input.vdt
+
+		this.checkCollision(player, "y")
+
+		player.isn = input.isn
+	}
+	checkCollision(player, way) {
+		if (player.pos.x > this.map.width) player.pos.x = this.map.width
+		else if (player.pos.x < 0) player.pos.x = 0
+		if (player.pos.y > this.map.height) player.pos.y = this.map.height
+		else if (player.pos.y < 0) player.pos.y = 0
+
+		for (let i = 0; i < this.map.tiles.length; i++) {
+			let tile = this.map.tiles[i];
+			if (tile.x < player.pos.x + player.size && tile.x + tile.scale > player.pos.x &&
+				tile.y < player.pos.y + player.size && tile.y + tile.scale > player.pos.y) {
+				if (player.lastPos[way] + player.size <= tile[way]) {
+					player.pos[way] = tile[way] - player.size
+				} else {
+					player.pos[way] = tile[way] + tile.scale
+				}
+			}
+		}
+	}
 }
 
 function moveProjectile(projectile, delta) {
@@ -189,13 +229,11 @@ function createGame() {
 	return newgame
 }
 
-function findObjectWithPropertyInArray(array, key, value) {
-	return array.filter(ar => {
-		return ar[key] == value
-	})[0];
-}
-
 wss.on("connection", function (client) {
+	client.godSend = function (type, data) {
+		let info = { type, data }
+		client.send(JSON.stringify(info))
+	}
 
 	let sessions = Array.from(gamesessions),
 		mygame = null,
@@ -220,39 +258,24 @@ wss.on("connection", function (client) {
 
 	client.on("message", function (message) {
 		setTimeout(function () {
-			let data = JSON.parse(message),
-				type = data.type
+			let parsed = JSON.parse(message),
+				type = parsed.type,
+				data = parsed.data;
+
 			if (type == "playerupdate") {
 				if (myplayer.dead) {
-					return
-				}
-				if (!currentTime) {
-					currentTime = Date.now()
-					return
-				}
-				if (data.time > Date.now()) {
-					// Kick player
 					return
 				}
 
 				let lastTime = currentTime
 				currentTime = data.time
-				let delta = currentTime - lastTime,
-					force = false
 
-				if (delta > 200) {
-					delta = 200
-					force = true
-				}
+				myplayer.rotation = data.rotation
 
-				movePlayer(myplayer, data.keys, delta)
+				mygame.movePlayer(myplayer, data.input)
 
-				let rotation = Math.atan2(data.target.y - myplayer.pos.y - myplayer.size / 2, data.target.x - myplayer.pos.x - myplayer.size / 2)
-				myplayer.rotation = rotation
-
-				if (force) {
-					client.send(JSON.stringify({ type: "playerpos", pos: myplayer.pos.toObject(), time: Date.now() }))
-				}
+				// Force-update playerpos
+				// client.godSend("playerpos", { pos: myplayer.pos.toObject(), time: Date.now() })
 			} else if (type == "shoot") {
 				if (myplayer.dead) {
 					return
@@ -261,30 +284,32 @@ wss.on("connection", function (client) {
 				let delta = Math.min(data.time - currentTime, 200),
 					pos = data.pos;
 
-				if (delta < 0) {
-					delta = 0
-				}
-
 				if (!data.target || data.target.x == null || data.target.y == null || !pos || pos.x == null || pos.y == null || !data.time) {
 					return
+				}
+
+				if (delta < 0) {
+					delta = 0
 				}
 
 				if (myplayer.pos.hypot(pos) > myplayer.speed * delta) {
 					pos = myplayer.pos
 				}
 
+				let newpos = {
+					x: pos.x + myplayer.size / 2,
+					y: pos.y + myplayer.size / 2
+				}
+
 				mygame.shootBullet(
-					{
-						x: pos.x + myplayer.size / 2,
-						y: pos.y + myplayer.size / 2
-					},
+					newpos,
 					data.target,
 					myplayer,
 					delta
 				)
 			} else if (type == "spawn") {
 				myplayer.spawn()
-				client.send(JSON.stringify({ type: "playerpos", pos: myplayer.pos.toObject(), time: Date.now() }))
+				client.godSend("playerpos", { pos: myplayer.pos.toObject(), time: Date.now() })
 			}
 		}, latency)
 	});
@@ -297,37 +322,11 @@ wss.on("connection", function (client) {
 	})
 });
 
-function movePlayer(player, keys, delta) {
-	let scalar = (keys.right || keys.left) && (keys.up || keys.down) ? 0.7 : 1
-
-	for (let i = 0; i < delta; i++) {
-
-		if (keys.right !== keys.left) {
-			if (keys.right) {
-				player.vel.x = 1 * scalar
-				player.pos.x += player.speed * scalar
-			} else {
-				player.vel.x = -1 * scalar
-				player.pos.x -= player.speed * scalar
-			}
-		} else {
-			player.vel.x = 0
-		}
-		if (keys.down !== keys.up) {
-			if (keys.down) {
-				player.vel.y = 1 * scalar
-				player.pos.y += player.speed * scalar
-			} else {
-				player.vel.y = -1 * scalar
-				player.pos.y -= player.speed * scalar
-			}
-		} else {
-			player.vel.y = 0
-		}
-	}
+function PrintSessions(delay) {
+	console.log("Sessions:", gamesessions.size);
+	delay && setTimeout(PrintSessions, delay);
 }
 
-!function PrintRooms() {
-	console.log("Sessions:", gamesessions.size);
-	setTimeout(PrintRooms, 5000);
-}()
+config.printSessions && PrintSessions(5000)
+
+console.log("Multiplayer-test running on port", config.port)

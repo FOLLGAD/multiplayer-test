@@ -1,4 +1,6 @@
 {
 	"dev": true,
-	"latency": 200
+	"latency": 200,
+	"printSessions": false,
+	"port": 80
 }

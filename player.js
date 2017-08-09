@@ -11,15 +11,16 @@ class player {
 		this.size = 40
 
 		this.pos = new vector(null, null)
-		this.vel = new vector(0, 0)
+		this.lastPos = new vector(null, null)
 		this.rotation = 0
 		this.dead = true
 
 		this.speed = 0.5
 		this.health = 100
+		this.isn = 0
 	}
 	spawn() {
-		this.pos.set(0, 0)
+		this.pos.set(500, 500)
 		this.health = 100
 		this.dead = false
 	}
@@ -37,12 +38,21 @@ class player {
 		return {
 			id: this.id,
 			pos: this.pos.toObject(),
-			vel: this.vel.toObject(),
+			lastPos: this.lastPos.toObject(),
 			color: this.color,
 			speed: this.speed,
 			size: this.size,
 			dead: this.dead,
 			rotation: this.rotation,
+			health: this.health,
+			isn: this.isn,
+		}
+	}
+	toBare() {
+		return {
+			id: this.id,
+			pos: this.pos.toObject(),
+			isn: this.isn,
 			health: this.health,
 		}
 	}
