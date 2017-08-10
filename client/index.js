@@ -9,23 +9,35 @@ let socket,
 	},
 	playerInputs = [],
 	inputNumber = 0,
-	currentTime = null;
+	currentTime = null,
+	viewport = {
+		x: 0,
+		y: 0,
+		width: null,
+		height: null
+	};
 
 let canvas = document.createElement("canvas"),
 	ctx = canvas.getContext("2d");
 
+/**
+ * 
+ * @param {string} screen "main_menu" | "game_menu" | "game_canvas"
+ */
 function showScreen(screen) {
 	if (screen == "game_menu") {
 		main_menu.style.display = "none"
 		game_menu.style.display = "block"
-	} else if (screen == "main_menu") {
-		main_menu.style.display = "block"
-		game_menu.style.display = "none"
 	} else if (screen == "game_canvas") {
 		main_menu.style.display = "none"
 		game_menu.style.display = "none"
+	} else if (screen == "main_menu") {
+		main_menu.style.display = "block"
+		game_menu.style.display = "none"
 	}
 }
+
+showScreen()
 
 function emit(type, data) {
 	let info = { type: type }
@@ -36,6 +48,9 @@ function emit(type, data) {
 function resize() {
 	canvas.width = window.innerWidth
 	canvas.height = window.innerHeight
+
+	viewport.width = canvas.width
+	viewport.height = canvas.height
 }
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -74,11 +89,16 @@ function multiplyVector(vector, scalar) {
 
 function updatePos(delta) {
 	if (player && !dead) {
+
+		let rotation = getPlayerRotation()
+
+		player.rotation = rotation
+
 		let input = {
 			delta: delta,
 			vdt: 0,
 			hdt: 0,
-			rotation: player.rotation,
+			rotation: rotation,
 			isn: inputNumber++,
 		}
 
@@ -93,10 +113,12 @@ function updatePos(delta) {
 
 		movePlayer(player, input)
 
-		player.rotation = Math.atan2(mouse.y - player.pos.y - player.size / 2, mouse.x - player.pos.x - player.size / 2)
-
 		sendInput(input)
 	}
+}
+
+function getPlayerRotation() {
+	return Math.atan2(mouse.y + viewport.y - player.pos.y - player.size / 2, mouse.x + viewport.x - player.pos.x - player.size / 2)
 }
 
 function sendInput(input) {
@@ -118,17 +140,22 @@ function movePlayer(player, input) {
 
 	checkCollision(player, "y")
 
+	player.pos.x = Math.floor(player.pos.x)
+	player.pos.y = Math.floor(player.pos.y)
+
 	player.isn = input.isn
 }
 
 function checkCollision(player, way) {
-	if (player.pos.x > gamestate.map.width) player.pos.x = gamestate.map.width
+	let map = gamestate.map
+
+	if (player.pos.x + player.size > map.width) player.pos.x = map.width - player.size
 	else if (player.pos.x < 0) player.pos.x = 0
-	if (player.pos.y > gamestate.map.height) player.pos.y = gamestate.map.height
+	if (player.pos.y + player.size > map.height) player.pos.y = map.height - player.size
 	else if (player.pos.y < 0) player.pos.y = 0
 
-	for (let i = 0; i < gamestate.map.tiles.length; i++) {
-		let tile = gamestate.map.tiles[i];
+	for (let i = 0; i < map.tiles.length; i++) {
+		let tile = map.tiles[i];
 		if (tile.x < player.pos.x + player.size && tile.x + tile.scale > player.pos.x &&
 			tile.y < player.pos.y + player.size && tile.y + tile.scale > player.pos.y) {
 			if (player.lastPos[way] + player.size <= tile[way]) {
@@ -140,34 +167,41 @@ function checkCollision(player, way) {
 	}
 }
 
+function getMouseCoords() {
+	return {
+		x: mouse.x + viewport.x,
+		y: mouse.y + viewport.y
+	}
+}
+
 function shootBullet() {
 	if (dead || player.pos.x == null || player.pos.y == null || mouse.x == null || mouse.y == null) {
 		return
 	}
 
+	let target = getMouseCoords()
+
 	let time = Date.now()
 	emit("shoot", {
 		pos: player.pos,
-		target: mouse,
+		target: target,
 		time: time,
 	})
 
 	let bulletsize = 8
-	let newpos = {
-		x: player.pos.x - bulletsize / 2 + player.size / 2,
-		y: player.pos.y - bulletsize / 2 + player.size / 2,
+
+	let midpos = {
+		x: player.pos.x + player.size / 2,
+		y: player.pos.y + player.size / 2
 	}
-	let newtarget = {
-		x: mouse.x - bulletsize / 2,
-		y: mouse.y - bulletsize / 2,
-	}
+
 	let bullet = {
-		pos: newpos,
-		dir: Math.atan2(newtarget.y - newpos.y, newtarget.x - newpos.x),
+		pos: midpos,
+		dir: getPlayerRotation(),
 		// damage: weapons[player.weapon].damage,
 		damage: 50,
 		speed: 0.8,
-		size: bulletsize,
+		radius: bulletsize,
 		owner: player.id,
 	}
 	gamestate.mybullets.push(bullet)
@@ -217,8 +251,15 @@ function onmessage(message) {
 	}
 }
 
+function connect() {
+	socket = new WebSocket("ws://192.168.1.20:80")
+	socket.onopen = onopen
+	socket.onmessage = onmessage
+	socket.onclose = onclose
+}
+
 function onclose() {
-	setTimeout(connect, 1000)
+	showScreen("main_menu")
 }
 
 function initialize() {
@@ -231,13 +272,6 @@ function initialize() {
 	playerInputs = []
 	inputNumber = 0
 	currentTime = null
-}
-
-function connect() {
-	socket = new WebSocket("ws://192.168.1.20:80")
-	socket.onopen = onopen
-	socket.onmessage = onmessage
-	socket.onclose = onclose
 }
 
 function move() {
@@ -298,7 +332,11 @@ document.addEventListener("mousedown", shootBullet)
 let clientsmoothing = true
 
 function draw(delta) {
-	ctx.clearRect(0, 0, canvas.width, canvas.height)
+	ctx.clearRect(viewport.x, viewport.y, viewport.width, viewport.height)
+	ctx.restore()
+	ctx.save()
+
+	ctx.translate(-viewport.x, -viewport.y)
 
 	let packetDelta = 0
 
@@ -362,19 +400,56 @@ function draw(delta) {
 		bullet.pos.x = newpos.x
 		bullet.pos.y = newpos.y
 
-		drawBullet(newpos, bullet)
+		if (checkBulletCollision(bullet, gamestate.mybullets, i)) {
+			i--
+		} else {
+			drawBullet(newpos, bullet)
+		}
 	}
+}
+
+function checkBulletCollision(bullet, array, index) {
+	let map = gamestate.map
+
+	for (let i = 0; i < map.tiles.length; i++) {
+		let tile = map.tiles[i]
+
+		let colx = bullet.pos.x + bullet.radius > tile.x
+			&& bullet.pos.x - bullet.radius < tile.x + tile.scale,
+			coly = bullet.pos.y + bullet.radius > tile.y
+				&& bullet.pos.y - bullet.radius < tile.y + tile.scale;
+
+		if ((bullet.pos.x < 0 || bullet.pos.x > map.width || bullet.pos.y < 0 || bullet.pos.y > map.height) ||
+			colx && coly) {
+			array.splice(index, 1)
+			return true
+		}
+	}
+	return false
 }
 
 function drawBullet(visbullet, bullet) {
 	ctx.fillStyle = "rgb(12, 12, 0)"
-	ctx.fillRect(visbullet.x, visbullet.y, bullet.size, bullet.size)
+
+	ctx.beginPath()
+	ctx.arc(visbullet.x, visbullet.y, bullet.radius, 0, Math.PI * 2, false)
+	ctx.fill()
 }
 
 function moveProjectile(projectile, delta) {
 	let x = projectile.pos.x + Math.cos(projectile.dir) * projectile.speed * delta
 	let y = projectile.pos.y + Math.sin(projectile.dir) * projectile.speed * delta
 	return { x: x, y: y }
+}
+
+function calculateViewport() {
+	viewport.x = player.pos.x - viewport.width / 2
+	if (viewport.x < 0) viewport.x = 0
+	else if (viewport.x + viewport.width > gamestate.map.width) viewport.x = gamestate.map.width - viewport.width
+
+	viewport.y = player.pos.y - viewport.height / 2
+	if (viewport.y < 0) viewport.y = 0
+	else if (viewport.y + viewport.height > gamestate.map.height) viewport.y = gamestate.map.height - viewport.height
 }
 
 function loop() {
@@ -397,5 +472,8 @@ function loop() {
 	let delta = currentTime - lastTime
 
 	updatePos(delta)
+
+	calculateViewport()
+
 	draw(delta)
 }

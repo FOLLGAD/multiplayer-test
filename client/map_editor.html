@@ -1,0 +1,41 @@
+<html>
+
+	<head>
+		<title>Map Editor</title>
+		<meta charset="utf-8" />
+		<script src="./map_editor.js"></script>
+		<style>
+			body {
+				margin: 0;
+				background: #eee;
+			}
+
+			.settings-row {
+				height: 100px;
+			}
+
+			.settings-row .right {
+				float: right;
+			}
+		</style>
+	</head>
+
+	<body>
+		<canvas></canvas>
+		<div class="settings-row">
+			<label> Width:
+				<input id="width-input" type="number" placeholder="Width" min="0" value="2000" />
+			</label>
+			<label> Height:
+				<input id="height-input" type="number" placeholder="Height" min="0" value="2000" />
+			</label>
+			<select name="objects" id="object-select">
+			</select>
+			<div class="right">
+				<input type="text" id="filename-input" placeholder="Filename" />
+				<button id="save-map-btn">Save to JSON</button>
+			</div>
+		</div>
+	</body>
+
+</html>

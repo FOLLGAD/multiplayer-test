@@ -25,7 +25,6 @@ fs.readdir("./maps", function (err, mapnames) {
 			let dir = "./maps/" + f
 			return JSON.parse(fs.readFileSync(dir, "utf-8"))
 		})
-	console.log(maps[0].tiles)
 })
 
 function broadcast(clients, message) {
@@ -45,7 +44,7 @@ function broadcast(clients, message) {
 
 class Game {
 	constructor() {
-		this.map = maps[0]
+		this.map = maps[Math.random() * maps.length | 0]
 		this.id = shortid.generate()
 		this.players = []
 		this.maxPlayers = 5
@@ -57,6 +56,19 @@ class Game {
 	changeMap(map) {
 		this.map = map;
 		return this
+	}
+	spawn(player) {
+		let spawnpoint
+
+		if (!this.map.spawnpoints || this.map.spawnpoints.length === 0) {
+			spawnpoint = { x: 0, y: 0 }
+		} else {
+			spawnpoint = this.map.spawnpoints[Math.random() * this.map.spawnpoints.length | 0]
+		}
+
+		// Choose a spawnpoint without enemies nearby etc.
+
+		player.spawn(spawnpoint.x, spawnpoint.y)
 	}
 	clientJoin(client) {
 		let myplayer = new player({ client })
@@ -89,7 +101,7 @@ class Game {
 		return playersCopy
 	}
 	updateGameState() {
-		setTimeout(this.updateGameState.bind(this), 50)
+		setTimeout(this.updateGameState.bind(this), config.tickMs)
 
 		if (!this.lastUpdate) {
 			this.lastUpdate = Date.now()
@@ -133,8 +145,9 @@ class Game {
 		return this
 	}
 	update(delta) {
-		this.bullets.forEach(bullet => {
+		this.bullets.forEach((bullet, index) => {
 			moveProjectile(bullet, delta)
+			this.checkProjectileCollision(bullet, index)
 		})
 		let players = this.players.filter(pl => !pl.dead)
 
@@ -146,34 +159,45 @@ class Game {
 
 				if (player.id == bullet.owner) continue;
 
-				let colx = bullet.pos.x + bullet.size > player.pos.x && bullet.pos.x < player.pos.x + player.size,
-					coly = bullet.pos.y + bullet.size > player.pos.y && bullet.pos.y < player.pos.y + player.size;
+				let colx = bullet.pos.x + bullet.radius > player.pos.x
+					&& bullet.pos.x - bullet.radius < player.pos.x + player.size,
+					coly = bullet.pos.y + bullet.radius > player.pos.y
+						&& bullet.pos.y - bullet.radius < player.pos.y + player.size;
 
 				if (colx && coly) {
-					this.bullets.splice(this.bullets.indexOf(bullet), 1)
+					this.bullets.splice(i, 1)
 					player.harm(bullet.damage)
 				}
 			}
 		}
 	}
+	checkProjectileCollision(bullet, index) {
+		let map = this.map
+		for (let i = 0; i < map.tiles.length; i++) {
+			let tile = map.tiles[i]
+
+			let colx = bullet.pos.x + bullet.radius > tile.x
+				&& bullet.pos.x - bullet.radius < tile.x + tile.scale,
+				coly = bullet.pos.y + bullet.radius > tile.y
+					&& bullet.pos.y - bullet.radius < tile.y + tile.scale;
+
+			if ((bullet.pos.x < 0 || bullet.pos.x > map.width || bullet.pos.y < 0 || bullet.pos.y > map.height) ||
+				colx && coly) {
+				this.bullets.splice(index, 1)
+				return
+			}
+		}
+	}
 	shootBullet(position, target, player, aheadStart = 0) {
 		let bulletsize = 8
-		let newpos = {
-			x: position.x - bulletsize / 2,
-			y: position.y - bulletsize / 2,
-		}
-		let newtarget = {
-			x: target.x - bulletsize / 2,
-			y: target.y - bulletsize / 2,
-		}
+
 		let bullet = {
-			pos: new vector(newpos.x, newpos.y),
-			dir: Math.atan2(newtarget.y - newpos.y, newtarget.x - newpos.x),
-			// damage: weapons[player.weapon].damage,
+			pos: new vector(position.x, position.y),
+			dir: Math.atan2(target.y - position.y, target.x - position.x),
 			damage: 50,
 			speed: 0.8,
-			size: bulletsize,
-			owner: player.id,
+			radius: bulletsize,
+			owner: player.id
 		}
 
 		moveProjectile(bullet, aheadStart)
@@ -195,16 +219,21 @@ class Game {
 
 		this.checkCollision(player, "y")
 
+		player.pos.x = Math.floor(player.pos.x)
+		player.pos.y = Math.floor(player.pos.y)
+
 		player.isn = input.isn
 	}
 	checkCollision(player, way) {
-		if (player.pos.x > this.map.width) player.pos.x = this.map.width
+		let map = this.map
+
+		if (player.pos.x + player.size > map.width) player.pos.x = map.width - player.size
 		else if (player.pos.x < 0) player.pos.x = 0
-		if (player.pos.y > this.map.height) player.pos.y = this.map.height
+		if (player.pos.y + player.size > map.height) player.pos.y = map.height - player.size
 		else if (player.pos.y < 0) player.pos.y = 0
 
-		for (let i = 0; i < this.map.tiles.length; i++) {
-			let tile = this.map.tiles[i];
+		for (let i = 0; i < map.tiles.length; i++) {
+			let tile = map.tiles[i];
 			if (tile.x < player.pos.x + player.size && tile.x + tile.scale > player.pos.x &&
 				tile.y < player.pos.y + player.size && tile.y + tile.scale > player.pos.y) {
 				if (player.lastPos[way] + player.size <= tile[way]) {
@@ -308,7 +337,7 @@ wss.on("connection", function (client) {
 					delta
 				)
 			} else if (type == "spawn") {
-				myplayer.spawn()
+				mygame.spawn(myplayer)
 				client.godSend("playerpos", { pos: myplayer.pos.toObject(), time: Date.now() })
 			}
 		}, latency)

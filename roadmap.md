@@ -1,5 +1,6 @@
 # Multiplayer-test
 
-*	Map support
+*	Map support DONE
+*	Map Editor
+*	Arrow collision
 *	Add bombs?
-*	

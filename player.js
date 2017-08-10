@@ -19,8 +19,8 @@ class player {
 		this.health = 100
 		this.isn = 0
 	}
-	spawn() {
-		this.pos.set(500, 500)
+	spawn(x = 0, y = 0) {
+		this.pos.set(x, y)
 		this.health = 100
 		this.dead = false
 	}
