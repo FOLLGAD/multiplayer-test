@@ -10,10 +10,36 @@
 	<body>
 		<div id="overlay">
 			<div id="main_menu">
-				<button id="connect_btn">Connect</button>
+				<div>
+					<button id="connect_btn">Connect</button>
+				</div>
+			</div>
+			<div id="server_menu" style="display: none;">
+				<h1>Join a server</h1>
+				<table id="servers">
+					<thead>
+						<tr>
+							<th>Name</th>
+							<th>Players</th>
+						</tr>
+					</thead>
+					<tbody>
+
+					</tbody>
+				</table>
+				<button id="create_new">Create new</button>
 			</div>
 			<div id="game_menu" style="display: none;">
-				<button id="spawn_btn">Spawn</button>
+				<div>
+					<button id="spawn_btn">Spawn</button>
+					<input type="text" id="player_name" placeholder="Name" />
+				</div>
+			</div>
+			<div id="game_hud" style="display: none;">
+				<div id="chat">
+					<ul id="chat_messages"></ul>
+					<input type="text" id="chat_input" />
+				</div>
 			</div>
 		</div>
 	</body>

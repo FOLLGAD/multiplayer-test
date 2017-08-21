@@ -27,21 +27,6 @@ fs.readdir("./maps", function (err, mapnames) {
 		})
 })
 
-function broadcast(clients, message) {
-	let newmsg = Object.assign({}, message);
-	delete newmsg.clients;
-	let msg = JSON.stringify(newmsg);
-	setTimeout(function () {
-		clients.forEach(cl => {
-			try {
-				cl.send(msg);
-			} catch (err) {
-				clients.splice(clients.indexOf(cl), 1);
-			}
-		})
-	}, latency)
-}
-
 class Game {
 	constructor() {
 		this.map = maps[Math.random() * maps.length | 0]
@@ -72,16 +57,26 @@ class Game {
 	}
 	clientJoin(client) {
 		let myplayer = new player({ client })
+
+		let obj = myplayer.toObject()
+
+		this.players.forEach(player => player.client.godSend("add-player", obj))
+
 		this.players.push(myplayer)
 
-		let players = this.filterPlayer(myplayer)
+		let players = this.players
 			.map(player => player.toObject())
 
-		let sendplayer = myplayer.toObject()
-
-		client.godSend("game-setup", { players: players, player: sendplayer, map: this.map });
+		client.godSend("game-setup", { players: players, id: myplayer.id, map: this.map, gameId: this.id });
 
 		return myplayer
+	}
+	clientLeave(client) {
+		let index = this.players.findIndex(player => player.client == client)
+		if (index !== -1) {
+			let oldplayer = this.players.splice(index, 1)
+			this.players.forEach(player => player.client.godSend("remove-player", oldplayer[0].id))
+		}
 	}
 	filterPlayer(players, player) {
 		// Shallow copy
@@ -119,21 +114,15 @@ class Game {
 	}
 	sendData() {
 		// Send updated players-positions to every player
-		let originalPlayers = Array.from(this.players)
-			// Filter out all dead
-			.filter(pl => !pl.dead)
+		let allPlayers = this.players
 			// Make JSON-friendly
-			.map(pl => pl.toObject())
+			.map(pl => pl.toBare())
 
 		this.players
 			.forEach(player => {
-				let players = this
-					// Filter out self
-					.filterPlayer(originalPlayers, player)
-
 				try {
 					// Send
-					player.client.godSend("gamestate", { time: this.lastUpdate, players: players, player: player.toBare(), bullets: this.bullets });
+					player.client.godSend("gamestate", { time: this.lastUpdate, players: allPlayers, bullets: this.bullets });
 				} catch (err) {
 					console.error(err)
 				}
@@ -195,7 +184,7 @@ class Game {
 			pos: new vector(position.x, position.y),
 			dir: Math.atan2(target.y - position.y, target.x - position.x),
 			damage: 50,
-			speed: 0.8,
+			speed: 1.5,
 			radius: bulletsize,
 			owner: player.id
 		}
@@ -269,18 +258,7 @@ wss.on("connection", function (client) {
 		myplayer = null,
 		currentTime;
 
-	// Find a game for the new client
-	for (let i = 0; i < sessions.length; i++) {
-		if (sessions[i].maxPlayers > sessions[i].players.length) {
-			myplayer = sessions[i].clientJoin(client)
-			mygame = sessions[i]
-			break
-		}
-	}
-
-	// Create game if no vacancy is found
-	if (null == mygame) {
-		let game = createGame()
+	let joinGame = function (game) {
 		myplayer = game.clientJoin(client)
 		mygame = game
 	}
@@ -291,62 +269,109 @@ wss.on("connection", function (client) {
 				type = parsed.type,
 				data = parsed.data;
 
-			if (type == "playerupdate") {
-				if (myplayer.dead) {
-					return
+			if (type == "join-game") {
+				if (data) {
+					// Find a game for the new client
+					for (let i = 0; i < sessions.length; i++) {
+						if (sessions[i].maxPlayers > sessions[i].players.length) {
+							if (data == sessions[i].id) {
+								joinGame(sessions[i])
+							}
+							break
+						}
+					}
+				} else {
+					let game = createGame()
+					joinGame(game)
+				}
+			} else if (type == "join-random") {
+				// Find a game for the new client
+				for (let i = 0; i < sessions.length; i++) {
+					if (sessions[i].maxPlayers > sessions[i].players.length) {
+						joinGame(sessions[i])
+						break
+					}
 				}
 
-				let lastTime = currentTime
-				currentTime = data.time
-
-				myplayer.rotation = data.rotation
-
-				mygame.movePlayer(myplayer, data.input)
-
-				// Force-update playerpos
-				// client.godSend("playerpos", { pos: myplayer.pos.toObject(), time: Date.now() })
-			} else if (type == "shoot") {
-				if (myplayer.dead) {
-					return
+				// Create game if no vacancy is found
+				if (null == mygame) {
+					let game = createGame()
+					joinGame(game)
 				}
+			} else if (type == "fetch-servers") {
+				let toSend = Array.from(sessions)
+					.map(session => [session.id, session.players.length])
+				client.godSend("server-list", toSend)
+			} else if (mygame && myplayer) {
+				if (type == "playerupdate") {
+					if (myplayer.dead) {
+						return
+					}
 
-				let delta = Math.min(data.time - currentTime, 200),
-					pos = data.pos;
+					let lastTime = currentTime
+					currentTime = data.time
 
-				if (!data.target || data.target.x == null || data.target.y == null || !pos || pos.x == null || pos.y == null || !data.time) {
-					return
+					myplayer.rotation = data.rotation
+
+					mygame.movePlayer(myplayer, data.input)
+
+					// Force-update playerpos
+					// client.godSend("playerpos", { pos: myplayer.pos.toObject(), time: Date.now() })
+				} else if (type == "shoot") {
+					if (myplayer.dead) {
+						return
+					}
+
+					let delta = Math.min(data.time - currentTime, 200),
+						pos = data.pos;
+
+					if (!data.target || data.target.x == null || data.target.y == null || !pos || pos.x == null || pos.y == null || !data.time) {
+						return
+					}
+
+					if (delta < 0) {
+						delta = 0
+					}
+
+					if (myplayer.pos.hypot(pos) > myplayer.speed * delta) {
+						pos = myplayer.pos
+					}
+
+					let newpos = {
+						x: pos.x + myplayer.size / 2,
+						y: pos.y + myplayer.size / 2
+					}
+
+					mygame.shootBullet(
+						newpos,
+						data.target,
+						myplayer,
+						delta
+					)
+				} else if (type == "spawn") {
+					mygame.spawn(myplayer)
+					client.godSend("playerpos", { pos: myplayer.pos.toObject(), time: Date.now() })
+				} else if (type == "chat-msg") {
+					if (data) {
+						mygame.players
+							.map(pl => pl.client)
+							.forEach(client => client.godSend("chat", [myplayer.id, data]))
+					}
+				} else if (type == "change-name") {
+					if (typeof data == "string") {
+						myplayer.name = data
+					}
 				}
-
-				if (delta < 0) {
-					delta = 0
-				}
-
-				if (myplayer.pos.hypot(pos) > myplayer.speed * delta) {
-					pos = myplayer.pos
-				}
-
-				let newpos = {
-					x: pos.x + myplayer.size / 2,
-					y: pos.y + myplayer.size / 2
-				}
-
-				mygame.shootBullet(
-					newpos,
-					data.target,
-					myplayer,
-					delta
-				)
-			} else if (type == "spawn") {
-				mygame.spawn(myplayer)
-				client.godSend("playerpos", { pos: myplayer.pos.toObject(), time: Date.now() })
 			}
 		}, latency)
 	});
 
 	client.on("close", function () {
-		mygame.players.splice(mygame.players.indexOf(myplayer), 1);
-		if (mygame.players.length <= 0) {
-			gamesessions.delete(mygame)
+		if (mygame) {
+			mygame.clientLeave(client)
+			if (mygame.players.length <= 0) {
+				gamesessions.delete(mygame)
+			}
 		}
 	})
 });

@@ -1,3 +1,13 @@
+let dev = true
+let ip = dev ? "localhost" : "192.176.48.30"
+
+let serverId
+
+window.location.search.slice(1).split("&").forEach(s => {
+	let d = s.split("=")
+	if (d[0] == "game") serverId = d[1]
+})
+
 let socket,
 	player,
 	dead = true,
@@ -15,29 +25,41 @@ let socket,
 		y: 0,
 		width: null,
 		height: null
-	};
+	},
+	screen = "main_menu";
 
 let canvas = document.createElement("canvas"),
 	ctx = canvas.getContext("2d");
 
 /**
  * 
- * @param {string} screen "main_menu" | "game_menu" | "game_canvas"
+ * @param {string} scr "main_menu" | "game_menu" | "server_list" | "game_canvas"
  */
-function showScreen(screen) {
-	if (screen == "game_menu") {
+function showScreen(scr) {
+	if (scr == "game_canvas") {
+		game_hud.style.display = "block"
+		game_menu.style.display = "none"
 		main_menu.style.display = "none"
+		server_menu.style.display = "none"
+	} else if (scr == "game_menu") {
 		game_menu.style.display = "block"
-	} else if (screen == "game_canvas") {
 		main_menu.style.display = "none"
+		game_hud.style.display = "none"
+		server_menu.style.display = "none"
+		document.getElementById("player_name").focus()
+	} else if (scr == "server_list") {
+		server_menu.style.display = "block"
+		game_hud.style.display = "none"
 		game_menu.style.display = "none"
-	} else if (screen == "main_menu") {
+		main_menu.style.display = "none"
+	} else if (scr == "main_menu") {
 		main_menu.style.display = "block"
+		game_hud.style.display = "none"
 		game_menu.style.display = "none"
+		server_menu.style.display = "none"
 	}
+	screen = scr
 }
-
-showScreen()
 
 function emit(type, data) {
 	let info = { type: type }
@@ -53,24 +75,63 @@ function resize() {
 	viewport.height = canvas.height
 }
 
+let game_menu,
+	main_menu,
+	game_hud,
+	connect_btn,
+	spawn_btn,
+	chat_input,
+	chat,
+	server_list,
+	server_menu,
+	create_new;
+
 document.addEventListener("DOMContentLoaded", function () {
 	document.body.appendChild(canvas)
 
 	window.addEventListener("resize", resize)
 	resize()
 
-	let game_menu = document.getElementById("game_menu"),
-		main_menu = document.getElementById("main_menu"),
-		connect_btn = document.getElementById("connect_btn"),
-		spawn_btn = document.getElementById("spawn_btn");
+	game_menu = document.getElementById("game_menu")
+	main_menu = document.getElementById("main_menu")
+	game_hud = document.getElementById("game_hud")
+	connect_btn = document.getElementById("connect_btn")
+	spawn_btn = document.getElementById("spawn_btn")
+	chat_input = document.getElementById("chat_input")
+	chat = document.getElementById("chat_messages")
+	server_list = document.getElementById("servers")
+	server_menu = document.getElementById("server_menu")
+	create_new = document.getElementById("create_new")
 
 	connect_btn.addEventListener("click", connect)
 
 	spawn_btn.addEventListener("click", spawn)
+
+	chat.addEventListener("mouseenter", e => {
+		chat.style.overflowY = "scroll"
+	})
+	chat.addEventListener("mouseleave", e => {
+		chat.style.overflowY = "hidden"
+	})
+
+	create_new.addEventListener("click", () => joinServer())
+
+	server_list.addEventListener("click", function (e) {
+		let d = e.target.tagName
+		if (d == "TD") {
+			let id = e.target.parentElement.children[0].textContent
+			joinServer(id)
+		}
+	})
 });
+
+function joinServer(id) {
+	emit("join-game", id)
+}
 
 function spawn() {
 	emit("spawn")
+	emit("change-name", document.getElementById("player_name").value)
 }
 
 function addVectors(base, add) {
@@ -118,7 +179,8 @@ function updatePos(delta) {
 }
 
 function getPlayerRotation() {
-	return Math.atan2(mouse.y + viewport.y - player.pos.y - player.size / 2, mouse.x + viewport.x - player.pos.x - player.size / 2)
+	return Math.atan2(mouse.y + viewport.y - player.pos.y - player.size / 2,
+		mouse.x + viewport.x - player.pos.x - player.size / 2)
 }
 
 function sendInput(input) {
@@ -175,7 +237,8 @@ function getMouseCoords() {
 }
 
 function shootBullet() {
-	if (dead || player.pos.x == null || player.pos.y == null || mouse.x == null || mouse.y == null) {
+	if (dead || player.pos.x == null || player.pos.y == null ||
+		mouse.x == null || mouse.y == null) {
 		return
 	}
 
@@ -200,16 +263,45 @@ function shootBullet() {
 		dir: getPlayerRotation(),
 		// damage: weapons[player.weapon].damage,
 		damage: 50,
-		speed: 0.8,
+		speed: 1.5,
 		radius: bulletsize,
 		owner: player.id,
 	}
 	gamestate.mybullets.push(bullet)
 }
 
+function fetchServers() {
+	emit("fetch-servers")
+}
+
 function onopen() {
-	showScreen("game_menu")
+	showScreen("server_list")
+	fetchServers()
+}
+
+function onServerJoin() {
 	initialize()
+}
+
+function getPlayerById(id) {
+	for (let i = 0; i < gamestate.players.length; i++) {
+		if (gamestate.players[i].id == id) {
+			return gamestate.players[i]
+		}
+	}
+}
+
+function addChatMessage(data) {
+	let newmsg = document.createElement("li")
+	let player = getPlayerById(data[0])
+	let name = player ? player.name : "unnamed player"
+	newmsg.textContent = `[${name}] ${data[1]}`
+
+	let chat = document.getElementById("chat_messages")
+
+	let isAtBottom = chat.scrollTop + chat.clientHeight == chat.scrollHeight
+	chat.appendChild(newmsg)
+	if (isAtBottom) chat.scrollTo(0, chat.scrollHeight)
 }
 
 function onmessage(message) {
@@ -218,20 +310,67 @@ function onmessage(message) {
 		data = parsed.data;
 
 	switch (type) {
+		case "server-list":
+			let table_body = server_menu.querySelector("tbody")
+			Array.from(table_body.children).forEach(function (c) {
+				table_body.removeChild(c)
+			})
+			if (data.length === 0) {
+				// Dam
+			} else {
+				data.forEach(server => {
+					let row = document.createElement("tr")
+
+					let name = document.createElement("td"),
+						players = document.createElement("td")
+
+					name.textContent = server[0]
+					players.textContent = server[1]
+
+					row.appendChild(name)
+					row.appendChild(players)
+
+					table_body.appendChild(row)
+				})
+			}
+			break
 		case "game-setup":
+			showScreen("game_menu")
 			gamestate.map = data.map
 			gamestate.players = data.players
-			player = data.player
+
+			player = data.players
+				.find(player => player.id == data.id)
 			loop()
 			break
 		case "gamestate":
-			gamestate.players = data.players
+			data.players
+				.forEach(pl => {
+					for (let i = 0; i < gamestate.players.length; i++) {
+						let realpl = gamestate.players[i]
+						if (pl.id == realpl.id) {
+							if (pl.name != void 0) {
+								realpl.name = pl.name
+							}
+							if (pl.pos != void 0) {
+								realpl.pos = pl.pos
+							}
+							if (pl.rotation != void 0) {
+								realpl.rotation = pl.rotation
+							}
+							if (pl.health != void 0) {
+								realpl.health = pl.health
+							}
+							if (pl.isn != void 0) {
+								realpl.isn = pl.isn
+							}
+							if (pl.dead != void 0) {
+								realpl.dead = pl.dead
+							}
+						}
+					}
+				})
 			gamestate.bullets = data.bullets
-
-			player.pos.x = data.player.pos.x
-			player.pos.y = data.player.pos.y
-			player.health = data.player.health
-			player.isn = data.player.isn
 
 			move()
 			break
@@ -248,11 +387,20 @@ function onmessage(message) {
 			dead = true
 			showScreen("game_menu")
 			break
+		case "chat":
+			addChatMessage(data)
+			break
+		case "add-player":
+			gamestate.players.push(data)
+			break
+		case "remove-player":
+			let index = gamestate.players.findIndex(player => data == player.id)
+			index !== -1 && gamestate.players.splice(index, 1)
 	}
 }
 
 function connect() {
-	socket = new WebSocket("ws://192.168.1.20:80")
+	socket = new WebSocket("ws://" + ip + ":80")
 	socket.onopen = onopen
 	socket.onmessage = onmessage
 	socket.onclose = onclose
@@ -292,7 +440,7 @@ const keys = {
 	right: false,
 	left: false,
 	shooting: false,
-};
+}
 
 let keyBinds = {
 	"KeyW": "up",
@@ -301,20 +449,48 @@ let keyBinds = {
 	"KeyA": "left",
 }
 
+function sendChatMsg() {
+	let chat = document.getElementById("chat_input")
+	emit("chat-msg", chat.value)
+	chat.value = ""
+}
+
 // For lag testing
 
 let LAGSWITCH = false
 
 document.addEventListener("keydown", function (e) {
-	if (e.code == "Backquote") {
-		LAGSWITCH = true
+	if (e.repeat) {
+		return
 	}
-	let bind = keyBinds[e.code]
-	bind && (keys[bind] = true)
+	if (screen == "game_canvas") {
+		if (e.code == "Backquote") {
+			LAGSWITCH = true
+		} else if (document.activeElement == chat_input) {
+			if (e.key == "Enter") {
+				sendChatMsg()
+				chat_input.blur()
+			}
+		} else if (e.key == "Enter") {
+			chat_input.focus()
+		} else {
+			let bind = keyBinds[e.code]
+			bind && (keys[bind] = true)
+		}
+	} else {
+		if (e.key == "Enter") {
+			if (screen == "main_menu") connect()
+			else if (screen == "game_menu") spawn()
+		}
+	}
 })
 document.addEventListener("keyup", function (e) {
-	let bind = keyBinds[e.code]
-	bind && (keys[bind] = false)
+	if (e.repeat) {
+		return
+	} else {
+		let bind = keyBinds[e.code]
+		bind && (keys[bind] = false)
+	}
 })
 
 let mouse = { x: undefined, y: undefined }
@@ -332,49 +508,53 @@ document.addEventListener("mousedown", shootBullet)
 let clientsmoothing = true
 
 function draw(delta) {
-	ctx.clearRect(viewport.x, viewport.y, viewport.width, viewport.height)
-	ctx.restore()
-	ctx.save()
-
+	ctx.clearRect(0, 0, viewport.width, viewport.height)
 	ctx.translate(-viewport.x, -viewport.y)
 
 	let packetDelta = 0
 
 	gamestate.players.forEach(drawPlayer => {
-		let newpos
+		let newpos = drawPlayer.pos
 
-		// if (clientsmoothing && packetDelta) {
-		// newpos = addVectors(drawPlayer.pos, multiplyVector(drawPlayer.vel, packetDelta * drawPlayer.speed))
-		// } else {
-		newpos = drawPlayer.pos
-		// }
+		gamestate.map.tiles.forEach(tile => {
+			ctx.fillStyle = "#777"
+			ctx.fillRect(tile.x, tile.y, tile.scale, tile.scale)
+		})
 
-		ctx.translate(newpos.x + drawPlayer.size / 2, newpos.y + drawPlayer.size / 2)
-		ctx.rotate(drawPlayer.rotation)
-		ctx.fillStyle = drawPlayer.color
-		ctx.fillRect(-drawPlayer.size / 2, -drawPlayer.size / 2, drawPlayer.size, drawPlayer.size)
-		ctx.rotate(-drawPlayer.rotation)
-		ctx.translate(-newpos.x - drawPlayer.size / 2, -newpos.y - drawPlayer.size / 2)
+		if (drawPlayer.dead) {
+
+		} else if (drawPlayer.id != player.id) {
+
+			ctx.translate(newpos.x + drawPlayer.size / 2,
+				newpos.y + drawPlayer.size / 2)
+			ctx.rotate(drawPlayer.rotation)
+			ctx.fillStyle = drawPlayer.color
+			ctx.fillRect(-drawPlayer.size / 2, -drawPlayer.size / 2,
+				drawPlayer.size, drawPlayer.size)
+			ctx.rotate(-drawPlayer.rotation)
+			ctx.translate(-newpos.x - drawPlayer.size / 2,
+				-newpos.y - drawPlayer.size / 2)
+
+			ctx.textAlign = "center"
+			ctx.font = "24px Arial"
+			ctx.fillStyle = "#333"
+			ctx.fillText(drawPlayer.name,
+				drawPlayer.pos.x + drawPlayer.size / 2, drawPlayer.pos.y - 10)
+		} else {
+			ctx.translate(player.pos.x + player.size / 2, player.pos.y + player.size / 2)
+			ctx.rotate(player.rotation)
+			ctx.fillStyle = player.color
+			ctx.fillRect(-player.size / 2, -player.size / 2, player.size, player.size)
+			ctx.rotate(-player.rotation)
+			ctx.translate(-player.pos.x - player.size / 2, -player.pos.y - player.size / 2)
+
+			// Health bar
+			let percentage = player.health / 100
+			ctx.fillStyle = "rgb(80, 240, 20)"
+			ctx.fillRect(player.pos.x + player.size / 2 - ((player.size / 2) * percentage),
+				player.pos.y - 10, player.size * percentage, 10)
+		}
 	})
-
-	gamestate.map.tiles.forEach(tile => {
-		ctx.fillStyle = "#333"
-		ctx.fillRect(tile.x, tile.y, tile.scale, tile.scale)
-	})
-
-	if (!dead) {
-		ctx.translate(player.pos.x + player.size / 2, player.pos.y + player.size / 2)
-		ctx.rotate(player.rotation)
-		ctx.fillStyle = player.color
-		ctx.fillRect(-player.size / 2, -player.size / 2, player.size, player.size)
-		ctx.rotate(-player.rotation)
-		ctx.translate(-player.pos.x - player.size / 2, -player.pos.y - player.size / 2)
-
-		// Health bar
-		let percentage = player.health / 100
-		ctx.fillStyle = "rgb(80, 240, 20)"
-		ctx.fillRect(player.pos.x + player.size / 2 - ((player.size / 2) * percentage), player.pos.y - 10, player.size * percentage, 10)
-	}
 
 	// Draw cursor
 	// if (mouse.x != void 0 && mouse.y != void 0) {
@@ -406,6 +586,8 @@ function draw(delta) {
 			drawBullet(newpos, bullet)
 		}
 	}
+
+	ctx.translate(viewport.x, viewport.y)
 }
 
 function checkBulletCollision(bullet, array, index) {
@@ -419,7 +601,8 @@ function checkBulletCollision(bullet, array, index) {
 			coly = bullet.pos.y + bullet.radius > tile.y
 				&& bullet.pos.y - bullet.radius < tile.y + tile.scale;
 
-		if ((bullet.pos.x < 0 || bullet.pos.x > map.width || bullet.pos.y < 0 || bullet.pos.y > map.height) ||
+		if ((bullet.pos.x < 0 || bullet.pos.x > map.width ||
+			bullet.pos.y < 0 || bullet.pos.y > map.height) ||
 			colx && coly) {
 			array.splice(index, 1)
 			return true
@@ -443,13 +626,20 @@ function moveProjectile(projectile, delta) {
 }
 
 function calculateViewport() {
-	viewport.x = player.pos.x - viewport.width / 2
-	if (viewport.x < 0) viewport.x = 0
-	else if (viewport.x + viewport.width > gamestate.map.width) viewport.x = gamestate.map.width - viewport.width
+	if (player.dead) return
 
-	viewport.y = player.pos.y - viewport.height / 2
-	if (viewport.y < 0) viewport.y = 0
-	else if (viewport.y + viewport.height > gamestate.map.height) viewport.y = gamestate.map.height - viewport.height
+	viewport.x = Math.floor(player.pos.x - viewport.width / 2)
+	if (viewport.x < 0)
+		viewport.x = 0
+	else if (viewport.x + viewport.width > gamestate.map.width)
+		viewport.x = gamestate.map.width - viewport.width
+
+	viewport.y = Math.floor(player.pos.y - viewport.height / 2)
+	if (viewport.y < 0)
+		viewport.y = 0
+	else if (viewport.y + viewport.height > gamestate.map.height)
+		viewport.y = gamestate.map.height - viewport.height
+
 }
 
 function loop() {
@@ -466,6 +656,7 @@ function loop() {
 		currentTime = Date.now()
 		return
 	}
+
 	let lastTime = currentTime
 	currentTime = Date.now()
 
