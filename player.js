@@ -22,6 +22,8 @@ module.exports = class player {
 
 		this.classname = "warrior"
 
+		this.selectedWeapon = 0
+
 		this.name = "Guest " + ((Math.random() * 100 + 1) | 0)
 	}
 	changeClass(classname) {
@@ -32,10 +34,14 @@ module.exports = class player {
 		return false
 	}
 	spawn(x = 0, y = 0) {
-		let theclass = classes[this.classname]
+		let myclass = classes[this.classname]
 		this.pos.set(x, y)
-		this.health = theclass.basehp
 		this.dead = false
+
+		this.health = myclass.basehp
+
+		this.weapons = myclass.weapons
+		this.selectedWeapon = 0
 	}
 	harm(damage) {
 		this.health -= damage
@@ -78,11 +84,14 @@ module.exports = class player {
 let classes = {
 	warrior: {
 		basehp: 150,
+		startWeapons: [],
 	},
 	archer: {
 		basehp: 100,
+		startWeapons: [],
 	},
 	mage: {
 		basehp: 75,
+		startWeapons: [],
 	},
 }

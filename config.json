@@ -1,6 +1,6 @@
 {
 	"dev": false,
-	"latency": 200,
+	"latency": 0,
 	"printSessions": false,
 	"port": 80,
 	"tickMs": 33
