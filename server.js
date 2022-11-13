@@ -1,8 +1,8 @@
 let config = require("./config.json");
+let express = require('express');
+let app = express();
 
-let WebSocket = require("ws"),
-	wss = new WebSocket.Server({ port: config.port }),
-	fs = require("fs");
+let	fs = require("fs");
 
 let shortid = require("shortid"),
 	vector = require("./vector"),
@@ -16,9 +16,20 @@ if (config.dev && config.latency) {
 	latency = config.latency;
 }
 
+let server = require('http').createServer();
+
+let WebSocket = require("ws"),
+	wss = new WebSocket.Server({ server, path: "/websocket" });
+
+app.use(express.static("client"))
+server.on('request', app)
+server.listen(config.port)
+
+console.log("Multiplayer-test running on port", config.port)
+
 let maps
 
-fs.readdir("./maps", function (err, mapnames) {
+fs.readdir("./maps", function (_err, mapnames) {
 	maps = mapnames
 		.filter(f => /\.json$/.test(f))
 		.map(f => {
@@ -51,8 +62,7 @@ class Game {
 			spawnpoint = this.map.spawnpoints[Math.random() * this.map.spawnpoints.length | 0]
 		}
 
-		// Choose a spawnpoint without enemies nearby etc.
-
+		// Choose a spawnpoint without enemies nearby etc. 
 		player.spawn(spawnpoint.x, spawnpoint.y)
 	}
 	clientJoin(client) {
@@ -383,4 +393,3 @@ function PrintSessions(delay) {
 
 config.printSessions && PrintSessions(5000)
 
-console.log("Multiplayer-test running on port", config.port)

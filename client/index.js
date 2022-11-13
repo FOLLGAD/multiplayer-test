@@ -1,5 +1,5 @@
 let dev = true
-let ip = dev ? "localhost" : "192.176.48.30"
+let ip = dev ? "localhost" : window.location.hostname
 
 let serverId
 
@@ -305,6 +305,7 @@ function addChatMessage(data) {
 }
 
 function onmessage(message) {
+	console.log("messsage", message)
 	let parsed = JSON.parse(message.data),
 		type = parsed.type,
 		data = parsed.data;
@@ -400,7 +401,7 @@ function onmessage(message) {
 }
 
 function connect() {
-	socket = new WebSocket("ws://" + ip + ":80")
+	socket = new WebSocket(`${dev ? "ws": "wss"}://${ip}:${dev ? "80" : "443"}/websocket`)
 	socket.onopen = onopen
 	socket.onmessage = onmessage
 	socket.onclose = onclose
