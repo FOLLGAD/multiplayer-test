@@ -305,7 +305,6 @@ function addChatMessage(data) {
 }
 
 function onmessage(message) {
-	console.log("messsage", message)
 	let parsed = JSON.parse(message.data),
 		type = parsed.type,
 		data = parsed.data;
